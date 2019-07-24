@@ -14,7 +14,7 @@ idx = 1:n;
 last = zeros(1,n);
 while any(label ~= last)
     [~,~,last(:)] = unique(label);                  % remove empty clusters
-    mu = X*normalize(sparse(idx,last,1),1);         % compute cluster centers 
+    mu = X*mynormalize(sparse(idx,last,1));         % compute cluster centers 
     [val,label] = min(dot(mu,mu,1)'/2-mu'*X,[],1);  % assign sample labels
 end
 energy = dot(X(:),X(:),1)+2*sum(val);

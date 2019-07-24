@@ -101,8 +101,10 @@ switch partitionCriterion
         Indics(1:n_per) = [] ;
         x_rest = x(Indics,:) ; y_rest = y(Indics) ;
         X_rest = X(Indics,:) ; Y_rest = Y(Indics) ;
-        opts = statset('Display','off');
-        [idx,C] = kmeans(x_rest,M-1,'MaxIter',500,'Options',opts);
+        %opts = statset('Display','off');
+        [idx,C] = kmeans(x_rest,M-1,'MaxIter',500);
+        %[idx, mu, energy] = mykmeans(x_rest',M-1);
+        %id = id';
         for i = 1:(M-1)
             xs{i+1} = x_rest(idx==i,:) ; ys{i+1} = y_rest(idx==i,:) ;
             Xs{i+1} = X_rest(idx==i,:) ; Ys{i+1} = Y_rest(idx==i,:) ;

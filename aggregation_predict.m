@@ -1,4 +1,4 @@
-function [mu,s2,t_predict] = aggregation_predict(Xt,models,criterion,q)
+function [mu,s2,t_predict] = aggregation_predict(Xt,models,criterion,q=1.5)
 % Aggregation GP for prediction
 % Inputs:
 %        Xt: a nt*d matrix containing nt d-dimensional test points
@@ -32,6 +32,11 @@ if ~strcmp(criterion,'TEGRBCM') % no use for GRBCM
     for i = 1:M   
         [mu_experts{i},s2_experts{i}] = gp(models{i}.hyp,models{i}.inffunc,models{i}.meanfunc, ...
                                    models{i}.covfunc,models{i}.likfunc,models{i}.X_norm,models{i}.Y_norm,Xt);
+       for k = 1:length(s2_experts{i})
+           if s2_experts{i}(k) < 0.0000001
+               s2_experts{i}(k) = 0.0000001;
+           endif
+       endfor
     end
 end
 
@@ -62,10 +67,12 @@ switch criterion
     case 'TEGPoE' % generalized product of GP experts using beta_i = 1/M  Tsallis Entropy
         kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
         for i = 1:M
-            %beta{i} = 1/M*ones(length(s2_experts{i}),1) ;
-            %beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
-            beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
-                           sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
+            if q == 1.0                
+                beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
+            else
+                beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
+                               sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
+            endif
             s2 = s2 + beta{i}./s2_experts{i} ; 
         end
         s2 = 1./s2 ;
@@ -88,18 +95,8 @@ switch criterion
         kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
 
         beta_total = zeros(nt,1) ;
-%         for i = 1:M
-%             beta{i} = exp(0.5*(log(kss) - log(s2_experts{i}))) ;
-%             beta_total = beta_total + beta{i} ;
-%         end
-%         for i = 1:M
-%             beta{i} = beta{i} ./ beta_total ;
-%         end
         for i = 1:M
-            %beta{i} = 0.5*(log(kss) - log(s2_experts{i}) - 1 + s2_experts{i}./kss...
-            %          + (mu_experts{i}.^2)./kss);
             beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
-            %beta{i} = 
             beta_total = beta_total + beta{i} ;
 
             s2 = s2 + beta{i}./s2_experts{i} ; 
@@ -111,26 +108,14 @@ switch criterion
         end
     case 'TERBCM' % robust Bayesian committee machine
         kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
-
-        
-%         for i = 1:M
-%             beta{i} = exp(0.5*(log(kss) - log(s2_experts{i}))) ;
-%             beta_total = beta_total + beta{i} ;
-%         end
-%         for i = 1:M
-%             beta{i} = beta{i} ./ beta_total ;
-%         end
-        result = [];
-        MSLL1 = [];
-        for q = 1.05:0.05:5
-            beta_total = zeros(nt,1) ;
-            mu = zeros(nt,1) ; s2 = zeros(nt,1) ;
+        beta_total = zeros(nt,1) ;
+        mu = zeros(nt,1) ; s2 = zeros(nt,1) ;
         for i = 1:M
-            %beta{i} = 0.5*(log(kss) - log(s2_experts{i}) - 1 + s2_experts{i}./kss...
-            %          + (mu_experts{i}.^2)./kss);
-            beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
-                           sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
-            %beta{i} = 
+            if q == 1.0                
+                beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
+            else
+                beta{i} = 1 / (q-1) * (q^-0.5 * (sqrt(s2_experts{i}) .* sqrt(2*pi)).^(1-q) - q^-0.5 * (sqrt(kss) .* sqrt(2*pi)).^(1-q));
+            endif
             beta_total = beta_total + beta{i} ;
 
             s2 = s2 + beta{i}./s2_experts{i} ; 
@@ -139,26 +124,6 @@ switch criterion
 
         for i = 1:M 
             mu = mu + s2.*(beta{i}.*mu_experts{i}./s2_experts{i}) ;
-        end
-        if strcmp(models{1}.optSet.Ynorm,'Y')
-            mu = mu*models{1}.Y_std + models{1}.Y_mean ;
-            s2 = s2*(models{1}.Y_std)^2 ;
-%             muf = muf*models{1}.Y_std + models{1}.Y_mean ;
-%             s2f = s2f*(models{1}.Y_std)^2 ;
-        end
-        result(end+1) = mse(mu, yt);
-        s2p   = 0.5*mean(log(2*pi*s2));
-        s2y    = 0.5*log(2*pi*std(y)^2);
-        lossp = (yt-mu).^2;
-        mup   = 0.5*mean(lossp./s2);
-        dt    = size(Xt,1);
-        muv   = ones(dt,1)*mean(y);
-        loss  = (yt-muv).^2;
-        muy    = 0.5*mean(loss/(std(y)^2));
-        MSLL1(end+1)  = s2p-s2y+mup-muy;
-        
-        
-        
         end
     case 'KLRBCM' % robust Bayesian committee machine
         kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
@@ -225,51 +190,7 @@ switch criterion
             mu = mu + beta{i}.*mu_crossExperts{i}./s2_crossExperts{i} ;
         end
         mu = s2.*(mu + (1-beta_total).*mu_crossExperts{1}./s2_crossExperts{1})  ;
-    case 'KLGRBCM'
-        % build M submodels based on cross data {X1,Xi} (1<=i<=M)
-        kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
-
-        for i = 1:M
-            if i == 1
-                models_cross{i} = models{i} ;
-            else
-                model = models{i} ;
-                model.X = [models{1}.X;models{i}.X] ; model.Y = [models{1}.Y;models{i}.Y] ; % X1 + Xi % Y1 + Yi
-                model.X_norm = [models{1}.X_norm;models{i}.X_norm] ; model.Y_norm = [models{1}.Y_norm;models{i}.Y_norm] ;
-            
-                models_cross{i} = model ;
-            end
-        end
-
-        for i = 1:M                            
-            [mu_crossExperts{i},s2_crossExperts{i}] = gp(models_cross{i}.hyp,models_cross{i}.inffunc,models_cross{i}.meanfunc, ...
-                                    models_cross{i}.covfunc,models_cross{i}.likfunc,models_cross{i}.X_norm,models_cross{i}.Y_norm,Xt);
-        end
-        
-        % combine predictions from GP experts
-        beta_total = zeros(nt,1) ;
-        %zero_num = zeros(M,1);
-        for i = 1:M
-            if i > 2
-                beta{i} = 0.5*(log(s2_crossExperts{1}) - log(s2_crossExperts{i}) - 1 + s2_crossExperts{i}./kss...
-                      + (mu_crossExperts{i}.^2)./s2_crossExperts{1});
-                %beta{i} = 0.5*(log(s2_crossExperts{1}) - log(s2_crossExperts{i})) ;
-            else 
-                beta{i} = ones(nt,1) ; % beta_1 = beat_2 = 1 ;
-            end
-            beta_total = beta_total + beta{i} ;
-            s2 = s2 + beta{i}./s2_crossExperts{i} ; 
-        end
-
-        s2 = 1./(s2 + (1-beta_total)./s2_crossExperts{1}) ;
-
-        for i = 1:M 
-            mu = mu + beta{i}.*mu_crossExperts{i}./s2_crossExperts{i} ;
-        end
-        mu = s2.*(mu + (1-beta_total).*mu_crossExperts{1}./s2_crossExperts{1})  ;
-        
     case 'TEGRBCM'
-        % build M submodels based on cross data {X1,Xi} (1<=i<=M)
         kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
 
         for i = 1:M
@@ -292,17 +213,18 @@ switch criterion
         % combine predictions from GP experts
         beta_total = zeros(nt,1) ;
         %zero_num = zeros(M,1);
-        %q = 0.5;
         for i = 1:M
             if i > 2
-                %beta{i} = 0.5*(log(s2_crossExperts{1}) - log(s2_crossExperts{i})) ;
-                beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_crossExperts{i}) ./ (sqrt(2*pi)*sqrt(s2_crossExperts{i})).^q - ...
-                           sqrt(s2_crossExperts{1}) ./ (sqrt(2*pi)*sqrt(s2_crossExperts{1})).^q) ;
+                if q == 1.0                
+                    beta{i} = 0.5*(log(s2_crossExperts{1}) - log(s2_crossExperts{i})) ;
+                else
+                    beta{i} = 1 / (q-1) * (q^-0.5 * (sqrt(s2_crossExperts{i}) .* sqrt(2*pi)).^(1-q) - q^-0.5 * (sqrt(s2_crossExperts{1}) .* sqrt(2*pi)).^(1-q));
+                endif
             else 
                 beta{i} = ones(nt,1) ; % beta_1 = beat_2 = 1 ;
             end
             beta_total = beta_total + beta{i} ;
-            s2 = s2 + beta{i}./s2_crossExperts{i} ; 
+            s2 = s2 + beta{i}./s2_crossExperts{i} ;
         end
 
         s2 = 1./(s2 + (1-beta_total)./s2_crossExperts{1}) ;
