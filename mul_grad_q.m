@@ -151,7 +151,7 @@ function qs = mul_grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.00000
                 %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
                 dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
                 grad_q_norm(k) += db * dq;
-                grad_q_reg(k) += beta{k}(b) * dq;
+                grad_q_reg(k) += (beta{k}(b) - 1) * dq;
             endfor
         endfor
         grad_q = grad_q_norm + lambda * grad_q_reg;
@@ -163,6 +163,7 @@ function qs = mul_grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.00000
         del_q = max(del_q, -clip);
         qs = qs - del_q;
         qs_dist = sqrt(sum((qs-last_qs).^2))
+        ttb = sum(beta_total)
         last_qs = qs;
         %ttb = sum(beta_total.^2)
         iter -= 1;

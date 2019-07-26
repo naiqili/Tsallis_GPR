@@ -149,12 +149,12 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
                 %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
                 dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
                 grad_q_norm += db * dq;
-                grad_q_reg += beta{k}(b) * dq;
+                grad_q_reg += (beta_total(b) - 1) * dq;
             endfor
         endfor
         grad_q_norm
         grad_q_reg
-        ttb = sum(beta_total.^2)
+        ttb = sum(beta_total)
         grad_q = grad_q_norm + lambda * grad_q_reg;
         grad_q /= (nt*(M-1));
         % update q
