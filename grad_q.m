@@ -1,12 +1,20 @@
 function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002, lambda=100, init_q=2.5)
     M = length(models); % M experts
+    NN = 0;
+    for i=1:M
+        Msize(i) = size(models{i}.X, 1);
+        NN += Msize(i);
+    endfor
+    Msize
+    Mprob = Msize / NN;
     q = init_q;
     while true
         if iter == 0
             break
         endif
         printf("Optimizing q: remain iter - %d, q - %6.4f\r\n", iter, q);
-        mi = randi(M);
+        mi = randsample(M, 1, replacement=true, Mprob)(1);
+        %mi = randi(M);
         md = models{mi};
         rnd_idx = randperm(size(md.X, 1));
         nt = min(bs, size(md.X, 1));
@@ -95,6 +103,7 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
             mu = s2.*(mu + (1-beta_total).*mu_crossExperts{1}./s2_crossExperts{1})  ;
         case 'TEGPoE' % generalized product of GP experts using beta_i = 1/M  Tsallis Entropy
             kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
+            beta_total = zeros(nt,1) ;
             for i = 1:M
                 if q == 1.0                
                     beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
@@ -102,6 +111,7 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
                     beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
                                    sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
                 endif
+                beta_total = beta_total + beta{i} ;
                 s2 = s2 + beta{i}./s2_experts{i} ; 
             end
             s2 = 1./s2 ;
@@ -113,31 +123,38 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
             error('No such aggregation model.') ;
         end
         grad_q_norm = 0.0; grad_q_reg = 0.0; grad_q = 0.0; 
-        for j = 1:M
-            if strcmp(criterion, 'TEGRBCM') && j==1
-                continue
-            endif
-            if j != mi
-                for k = 1:size(nt, 1)
-                    ss = sqrt(kss(k));
-                    if strcmp(criterion, 'TEGRBCM')
-                        si = sqrt(s2_crossExperts{j}(k));
-                    else
-                        si = sqrt(s2_experts{j}(k));
+        for b = 1:size(nt, 1)
+            for k=1:M
+                if k==mi
+                    continue
+                endif
+                if strcmp(criterion, 'TEGRBCM')
+                    if k==1 || k==2
+                        continue
                     endif
-                    if strcmp(criterion, 'TEGPoE')
-                        db = - log(si) - 0.5 * sum((Yt - mu_experts{j}).^2) / s2_experts{j}(k);
-                    else
-                        db = log(ss) - log(si) + 0.5 * sum((Yt - 0).^2) / kss(k) - 0.5 * sum((Yt - mu_experts{j}).^2) / s2_experts{j}(k);
-                    endif
-                    dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
-                    grad_q_norm += db * dq;
-                    grad_q_reg -= beta{j}(k) * dq;
-                endfor
-            endif
+                    si = sqrt(s2_crossExperts{1}(b)); % sigma_i
+                    sk = sqrt(s2_crossExperts{k}(b)); %sigma_k
+                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - mu_crossExperts{1}).^2) / si^2 - 0.5 * sum((Yt - mu_crossExperts{k}).^2) / sk^2 );
+                elseif strcmp(criterion, 'TERBCM')
+                    si = sqrt(kss(b)); % sigma_i
+                    sk = sqrt(s2_experts{k}(b));
+                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - 0).^2) / si^2 - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
+                elseif strcmp(criterion, 'TEGPoE')
+                    si = sqrt(kss(b)); % sigma_i
+                    sk = sqrt(s2_experts{k}(b));
+                    db = -( - log(sk) - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
+                else
+                    error('No such criterion.') ;
+                endif
+                %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
+                dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
+                grad_q_norm += db * dq;
+                grad_q_reg += beta{k}(b) * dq;
+            endfor
         endfor
         grad_q_norm
         grad_q_reg
+        ttb = sum(beta_total.^2)
         grad_q = grad_q_norm + lambda * grad_q_reg;
         grad_q /= (nt*(M-1));
         % update q
@@ -145,6 +162,9 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
         clip = 0.8;
         del_q = min(del_q, clip);
         del_q = max(del_q, -clip);
-        q = q + del_q;
+        q = q - del_q;
+        if q < 0.0001
+            q = 0.0001
+        endif
         iter -= 1;
     endwhile

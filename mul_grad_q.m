@@ -1,13 +1,23 @@
 function qs = mul_grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002, lambda=100, init_q)
     M = length(models); % M experts
+    Msize = zeros(M, 1);
+    NN = 0;
+    for i=1:M
+        Msize(i) = size(models{i}.X, 1);
+        NN += Msize(i);
+    endfor
+    Msize
+    Mprob = Msize / NN;
     qs = init_q;
+    last_qs = qs;
     while true
         if iter == 0
             break
         endif
         printf("Optimizing qs: remain iter - %d\r\n", iter);
-        qs
-        mi = randi(M);
+        %qs
+        mi = randsample(M, 1, replacement=true, Mprob)(1);
+        %mi = randi(M);
         md = models{mi};
         rnd_idx = randperm(size(md.X, 1));
         nt = min(bs, size(md.X, 1));
@@ -104,7 +114,8 @@ function qs = mul_grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.00000
                     beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
                                    sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
                 endif
-                s2 = s2 + beta{i}./s2_experts{i} ; 
+                s2 = s2 + beta{i}./s2_experts{i} ;
+                beta_total = beta_total + beta{i} ; 
             end
             s2 = 1./s2 ;
 
@@ -113,39 +124,46 @@ function qs = mul_grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.00000
             end
         end
         grad_q_norm = zeros(M,1); grad_q_reg = zeros(M,1); grad_q = zeros(M,1); 
-        for j = 1:M
-            if strcmp(criterion, 'TEGRBCM') && j==1
-                continue
-            endif
-            if j != mi
-                for k = 1:size(nt, 1)
-                    q = qs(j);
-                    ss = sqrt(kss(k));
-                    if strcmp(criterion, 'TEGRBCM')
-                        si = sqrt(s2_crossExperts{j}(k));
-                    else
-                        si = sqrt(s2_experts{j}(k));
+        for b = 1:size(nt, 1)
+            for k=1:M
+                if k==mi
+                    continue
+                endif
+                q=qs(k);
+                if strcmp(criterion, 'TEGRBCM')
+                    if k==1 || k==2
+                        continue
                     endif
-                    
-                    if strcmp(criterion, 'TEGPoE')
-                        db = - log(si) - 0.5 * sum((Yt - mu_experts{j}).^2) / s2_experts{j}(k);
-                    else
-                        db = log(ss) - log(si) + 0.5 * sum((Yt - 0).^2) / kss(k) - 0.5 * sum((Yt - mu_experts{j}).^2) / s2_experts{j}(k);
-                    endif
-                    dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
-                    grad_q_norm(j) += db * dq;
-                    grad_q_reg(j) -= beta{j}(k) * dq;
-                endfor
-            endif
+                    si = sqrt(s2_crossExperts{1}(b)); % sigma_i
+                    sk = sqrt(s2_crossExperts{k}(b)); %sigma_k
+                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - mu_crossExperts{1}).^2) / si^2 - 0.5 * sum((Yt - mu_crossExperts{k}).^2) / sk^2 );
+                elseif strcmp(criterion, 'TERBCM')
+                    si = sqrt(kss(b)); % sigma_i
+                    sk = sqrt(s2_experts{k}(b));
+                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - 0).^2) / si^2 - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
+                elseif strcmp(criterion, 'TEGPoE')
+                    si = sqrt(kss(b)); % sigma_i
+                    sk = sqrt(s2_experts{k}(b));
+                    db = -( - log(sk) - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
+                else
+                    error('No such criterion.') ;
+                endif
+                %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
+                dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
+                grad_q_norm(k) += db * dq;
+                grad_q_reg(k) += beta{k}(b) * dq;
+            endfor
         endfor
         grad_q = grad_q_norm + lambda * grad_q_reg;
-        grad_q /= (nt*(M-1));
+        grad_q /= (nt);
         % update q
         del_q = lr * grad_q;
         clip = 0.8;
         del_q = min(del_q, clip);
         del_q = max(del_q, -clip);
-        qs = qs + del_q;
-        ttb = sum(beta_total.^2)
+        qs = qs - del_q;
+        qs_dist = sqrt(sum((qs-last_qs).^2))
+        last_qs = qs;
+        %ttb = sum(beta_total.^2)
         iter -= 1;
     endwhile
