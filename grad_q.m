@@ -1,25 +1,39 @@
-function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002, lambda=100, init_q=2.5)
+function q = grad_q(models, criterion, optSet, iter=200, lr=0.0000000002, lambda=0.01, init_q=2.5)
     M = length(models); % M experts
     NN = 0;
     for i=1:M
         Msize(i) = size(models{i}.X, 1);
         NN += Msize(i);
     endfor
-    Msize
+    Msize;
     Mprob = Msize / NN;
     q = init_q;
-    while true
-        if iter == 0
-            break
-        endif
-        printf("Optimizing q: remain iter - %d, q - %6.4f\r\n", iter, q);
-        mi = randsample(M, 1, replacement=true, Mprob)(1);
-        %mi = randi(M);
-        md = models{mi};
-        rnd_idx = randperm(size(md.X, 1));
-        nt = min(bs, size(md.X, 1));
-        Xt = md.X(rnd_idx(1:nt), :); % randomly select test data
-        Yt = md.Y(rnd_idx(1:nt), :); % randomly select test data   
+    
+    printf("Start preprocessing...\r\n");
+    maxM = 0;
+    for k=1:M
+        maxM = max(maxM, size(models{k}.X, 1));
+    endfor
+    amu = zeros(M, M, maxM) ; as2 = zeros(M, M, maxM) ; akss = zeros(M, maxM) ; 
+    
+    if strcmp(criterion,'TEGRBCM') 
+        for i=1:M
+            if i == 1
+                models_cross{i} = models{i} ;
+            else
+                model = models{i} ;
+                model.X = [models{1}.X;models{i}.X] ; model.Y = [models{1}.Y;models{i}.Y] ; % X1 + Xi % Y1 + Yi
+                model.X_norm = [models{1}.X_norm;models{i}.X_norm] ; model.Y_norm = [models{1}.Y_norm;models{i}.Y_norm] ;
+
+                models_cross{i} = model ;
+            endif
+        endfor
+    endif
+    for k=1:M
+        md = models{k};
+        Xt = md.X;
+        Yt = md.Y;
+        nt = size(Xt, 1);
         % normalization of test points Xt
         if strcmp(models{1}.optSet.Xnorm,'Y')
             Xt = (Xt - repmat(models{1}.X_mean,nt,1)) ./ (repmat(models{1}.X_std,nt,1)) ;
@@ -28,135 +42,82 @@ function q = grad_q(models, criterion, optSet, iter=200, bs=100, lr=0.0000000002
         if strcmp(models{1}.optSet.Ynorm,'Y')
             Yt = (Yt - repmat(models{1}.Y_mean,nt,1)) ./ (repmat(models{1}.Y_std,nt,1)) ;
         end
+        models{k}.Xt = Xt; models{k}.Yt = Yt;
+        kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
+        kss = max(kss, 1e-4);
+        akss(k, 1:length(kss)) = kss;
         for i = 1:M   
-            [mu_experts{i},s2_experts{i}] = gp(models{i}.hyp,models{i}.inffunc,models{i}.meanfunc, ...
-                                       models{i}.covfunc,models{i}.likfunc,models{i}.X_norm,models{i}.Y_norm,Xt);
-           for k = 1:length(s2_experts{i})
-               if s2_experts{i}(k) < 0.0000001
-                   s2_experts{i}(k) = 0.0000001;
-               endif
-           endfor
-        end
-        mu = zeros(nt,1) ; s2 = zeros(nt,1) ;
-        switch criterion 
-        case 'TERBCM' % robust Bayesian committee machine
-            kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
-            beta_total = zeros(nt,1) ;
-            mu = zeros(nt,1) ; s2 = zeros(nt,1) ;
-            for i = 1:M
-                if q == 1.0                
-                    beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
-                else
-                    beta{i} = 1 / (q-1) * (q^-0.5 * (sqrt(s2_experts{i}) .* sqrt(2*pi)).^(1-q) - q^-0.5 * (sqrt(kss) .* sqrt(2*pi)).^(1-q));
-                endif
-                beta_total = beta_total + beta{i} ;
-
-                s2 = s2 + beta{i}./s2_experts{i} ; 
-            end
-            s2 = 1./(s2 + (1-beta_total)./kss) ;
-
-            for i = 1:M 
-                mu = mu + s2.*(beta{i}.*mu_experts{i}./s2_experts{i}) ;
-            end
-        case 'TEGRBCM'
-            kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik); % because s2_experts consider noise
-
-            for i = 1:M
-                if i == 1
-                    models_cross{i} = models{i} ;
-                else
-                    model = models{i} ;
-                    model.X = [models{1}.X;models{i}.X] ; model.Y = [models{1}.Y;models{i}.Y] ; % X1 + Xi % Y1 + Yi
-                    model.X_norm = [models{1}.X_norm;models{i}.X_norm] ; model.Y_norm = [models{1}.Y_norm;models{i}.Y_norm] ;
-
-                    models_cross{i} = model ;
-                end
-            end
-
-            for i = 1:M                            
+            if i == k
+                continue
+            endif
+            if ~strcmp(criterion,'TEGRBCM') 
+                [mu_experts{i},s2_experts{i}] = gp(models{i}.hyp,models{i}.inffunc,models{i}.meanfunc, ...
+                                           models{i}.covfunc,models{i}.likfunc,models{i}.X_norm,models{i}.Y_norm,Xt);
+               s2_experts{i} = max(s2_experts{i}, 1e-4);
+               amu(k, i, 1:length(mu_experts{i})) = mu_experts{i}; 
+               as2(k, i, 1:length(s2_experts{i})) = s2_experts{i}; 
+            else
+                 
                 [mu_crossExperts{i},s2_crossExperts{i}] = gp(models_cross{i}.hyp,models_cross{i}.inffunc,models_cross{i}.meanfunc, ...
                                         models_cross{i}.covfunc,models_cross{i}.likfunc,models_cross{i}.X_norm,models_cross{i}.Y_norm,Xt);
-            end
-
-            % combine predictions from GP experts
-            beta_total = zeros(nt,1) ;
-            %zero_num = zeros(M,1);
-            for i = 1:M
-                if i > 2
-                    if q == 1.0                
-                        beta{i} = 0.5*(log(s2_crossExperts{1}) - log(s2_crossExperts{i})) ;
-                    else
-                        beta{i} = 1 / (q-1) * (q^-0.5 * (sqrt(s2_crossExperts{i}) .* sqrt(2*pi)).^(1-q) - q^-0.5 * (sqrt(s2_crossExperts{1}) .* sqrt(2*pi)).^(1-q));
-                    endif
-                else 
-                    beta{i} = ones(nt,1) ; % beta_1 = beat_2 = 1 ;
-                end
-                beta_total = beta_total + beta{i} ;
-                s2 = s2 + beta{i}./s2_crossExperts{i} ; 
-            end
-
-            s2 = 1./(s2 + (1-beta_total)./s2_crossExperts{1}) ;
-
-            for i = 1:M 
-                mu = mu + beta{i}.*mu_crossExperts{i}./s2_crossExperts{i} ;
-            end
-            mu = s2.*(mu + (1-beta_total).*mu_crossExperts{1}./s2_crossExperts{1})  ;
-        case 'TEGPoE' % generalized product of GP experts using beta_i = 1/M  Tsallis Entropy
-            kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
-            beta_total = zeros(nt,1) ;
-            for i = 1:M
-                if q == 1.0                
-                    beta{i} = 0.5*(log(kss) - log(s2_experts{i})) ;
-                else
-                    beta{i} = sqrt(2*pi) / (sqrt(q)*(q-1)) * (sqrt(s2_experts{i}) ./ (sqrt(2*pi)*sqrt(s2_experts{i})).^q - ...
-                                   sqrt(kss) ./ (sqrt(2*pi)*sqrt(kss)).^q) ;
-                endif
-                beta_total = beta_total + beta{i} ;
-                s2 = s2 + beta{i}./s2_experts{i} ; 
-            end
-            s2 = 1./s2 ;
-
-            for i = 1:M 
-                mu = mu + s2.*(beta{i}.*mu_experts{i}./s2_experts{i}) ;
-            end
-        otherwise
-            error('No such aggregation model.') ;
+               s2_crossExperts{i} = max(s2_crossExperts{i}, 1e-4);
+               amu(k, i, 1:length(mu_crossExperts{i})) = mu_crossExperts{i}; 
+               as2(k, i, 1:length(s2_crossExperts{i})) = s2_crossExperts{i}; 
+            endif
         end
+    endfor
+    printf("Finish preprocessing...\r\n");
+    while true
+        if iter == 0
+            break
+        endif
+        if mod(iter, 1e3) == 0
+            printf("Optimizing q: remain iter - %d, q - %6.4f\r\n", iter, q);
+        endif
+        mi = randsample(M, 1, replacement=true, Mprob)(1);        
+        if strcmp(criterion, 'TEGRBCM') && (mi == 1 || mi == 2)
+            continue
+        endif
+        mn = size(models{mi}.X, 1);
+        b = randi(mn);
+        xt = models{mi}.Xt(b); yt = models{mi}.Yt(b); 
         grad_q_norm = 0.0; grad_q_reg = 0.0; grad_q = 0.0; 
-        for b = 1:size(nt, 1)
-            for k=1:M
-                if k==mi
+        for k=1:M
+            if k==mi
+                continue
+            endif
+            if strcmp(criterion, 'TEGRBCM')
+                if k==1 || k==2
                     continue
                 endif
-                if strcmp(criterion, 'TEGRBCM')
-                    if k==1 || k==2
-                        continue
-                    endif
-                    si = sqrt(s2_crossExperts{1}(b)); % sigma_i
-                    sk = sqrt(s2_crossExperts{k}(b)); %sigma_k
-                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - mu_crossExperts{1}).^2) / si^2 - 0.5 * sum((Yt - mu_crossExperts{k}).^2) / sk^2 );
-                elseif strcmp(criterion, 'TERBCM')
-                    si = sqrt(kss(b)); % sigma_i
-                    sk = sqrt(s2_experts{k}(b));
-                    db = -( log(si) - log(sk) + 0.5 * sum((Yt - 0).^2) / si^2 - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
-                elseif strcmp(criterion, 'TEGPoE')
-                    si = sqrt(kss(b)); % sigma_i
-                    sk = sqrt(s2_experts{k}(b));
-                    db = -( - log(sk) - 0.5 * sum((Yt - mu_experts{k}).^2) / sk^2 );
-                else
-                    error('No such criterion.') ;
-                endif
-                %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
-                dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
-                grad_q_norm += db * dq;
-                grad_q_reg += (beta_total(b) - 1) * dq;
-            endfor
+                si = sqrt(as2(mi, 1, b));
+                sk = sqrt(as2(mi, k, b)); 
+                db = -( log(si) - log(sk) + 0.5 * (yt - amu(mi, 1, b)).^2 / si^2 - 0.5 * (yt - amu(mi, k, b)).^2 / sk^2);
+            elseif strcmp(criterion, 'TERBCM')
+                si = sqrt(akss(mi, b));
+                sk = sqrt(as2(mi, k, b)) ;
+                db = -( log(si) - log(sk) + 0.5 * (yt - 0).^2 / si^2 - 0.5 * (yt - amu(mi, k, b)).^2 / sk^2);
+            elseif strcmp(criterion, 'TEGPoE')
+                si = sqrt(akss(mi, b));
+                sk = sqrt(as2(mi, k, b));
+                db = -( - log(sk) - 0.5 * (yt - amu(mi, k, b)).^2 / sk^2);
+            else
+                error('No such criterion.') ;
+            endif
+            if q == 1.0                
+                beta = 0.5*(log(si^2) - log(sk^2)) ;
+            else
+                beta = 1 / (q-1) * (q^-0.5 * (sk .* sqrt(2*pi)).^(1-q) - q^-0.5 * (si .* sqrt(2*pi)).^(1-q));
+            endif
+            %dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * si^(-q) * ss^(-q) * (-(-si^q * ss + si * ss^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si*ss^q*log(si) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*si^q*ss*log(ss));
+            dq = 1 / ((-1+q)^2 * q^1.5) * 2^(-0.5-q) * pi^(0.5-q) * sk^(-q) * si^(-q) * (-(-sk^q * si + sk * si^q)*(2^(1+0.5*q)*pi^(0.5*q)*q + (2*pi)^(0.5*q)*(-1+q)*(1+q*log(2*pi))) - 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk*si^q*log(sk) + 2^(1+0.5*q)*pi^(0.5*q)*(-1+q)*q*sk^q*si*log(si));
+            grad_q_norm += db * dq;
+            grad_q_reg += beta * dq;
         endfor
-        grad_q_norm
-        grad_q_reg
-        ttb = sum(beta_total)
-        grad_q = grad_q_norm + lambda * grad_q_reg;
-        grad_q /= (nt*(M-1));
+        %grad_q_norm
+        %grad_q_reg
+        grad_q = grad_q_norm + lambda*grad_q_reg;
+        grad_q /= (M-1);
         % update q
         del_q = lr * grad_q;
         clip = 0.8;

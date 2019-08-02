@@ -208,6 +208,11 @@ switch criterion
         for i = 1:M                            
             [mu_crossExperts{i},s2_crossExperts{i}] = gp(models_cross{i}.hyp,models_cross{i}.inffunc,models_cross{i}.meanfunc, ...
                                     models_cross{i}.covfunc,models_cross{i}.likfunc,models_cross{i}.X_norm,models_cross{i}.Y_norm,Xt);
+           for k = 1:length(s2_crossExperts{i})
+               if s2_crossExperts{i}(k) < 0.0000001
+                   s2_crossExperts{i}(k) = 0.0000001;
+               endif
+           endfor
         end
         
         % combine predictions from GP experts
