@@ -130,6 +130,7 @@ switch criterion
             endif
             s2 = s2 + beta{i}./s2_experts{i} ; 
         end
+        s2 = max(s2, 1e-5);
         s2 = 1./s2 ;
 
         for i = 1:M 

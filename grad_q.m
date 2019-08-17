@@ -30,22 +30,38 @@ function q = grad_q(models, criterion, optSet, iter=200, lr=0.0000000002, lambda
         endfor
     endif
     for k=1:M
-        md = models{k};
-        Xt = md.X;
-        Yt = md.Y;
-        nt = size(Xt, 1);
-        % normalization of test points Xt
-        if strcmp(models{1}.optSet.Xnorm,'Y')
-            Xt = (Xt - repmat(models{1}.X_mean,nt,1)) ./ (repmat(models{1}.X_std,nt,1)) ;
-        end
-        % normalization of test points Yt
-        if strcmp(models{1}.optSet.Ynorm,'Y')
-            Yt = (Yt - repmat(models{1}.Y_mean,nt,1)) ./ (repmat(models{1}.Y_std,nt,1)) ;
-        end
-        models{k}.Xt = Xt; models{k}.Yt = Yt;
-        kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
-        kss = max(kss, 1e-4);
-        akss(k, 1:length(kss)) = kss;
+        if ~strcmp(criterion,'TEGRBCM') 
+            md = models{k};
+            Xt = md.X;
+            Yt = md.Y;
+            nt = size(Xt, 1);
+            % normalization of test points Xt
+            if strcmp(models{1}.optSet.Xnorm,'Y')
+                Xt = (Xt - repmat(models{1}.X_mean,nt,1)) ./ (repmat(models{1}.X_std,nt,1)) ;
+            end
+            % normalization of test points Yt
+            if strcmp(models{1}.optSet.Ynorm,'Y')
+                Yt = (Yt - repmat(models{1}.Y_mean,nt,1)) ./ (repmat(models{1}.Y_std,nt,1)) ;
+            end
+            models{k}.Xt = Xt; models{k}.Yt = Yt;
+            kss = feval(models{1}.covfunc,models{1}.hyp.cov,Xt,'diag') + exp(2*models{1}.hyp.lik);
+            kss = max(kss, 1e-4);
+            akss(k, 1:length(kss)) = kss;
+        else
+            md = models_cross{k};
+            Xt = md.X;
+            Yt = md.Y;
+            nt = size(Xt, 1);
+            % normalization of test points Xt
+            if strcmp(models{1}.optSet.Xnorm,'Y')
+                Xt = (Xt - repmat(models{1}.X_mean,nt,1)) ./ (repmat(models{1}.X_std,nt,1)) ;
+            end
+            % normalization of test points Yt
+            if strcmp(models{1}.optSet.Ynorm,'Y')
+                Yt = (Yt - repmat(models{1}.Y_mean,nt,1)) ./ (repmat(models{1}.Y_std,nt,1)) ;
+            end
+            models_cross{k}.Xt = Xt; models_cross{k}.Yt = Yt;
+        endif
         for i = 1:M   
             if i == k
                 continue
@@ -74,13 +90,19 @@ function q = grad_q(models, criterion, optSet, iter=200, lr=0.0000000002, lambda
         if mod(iter, 1e3) == 0
             printf("Optimizing q: remain iter - %d, q - %6.4f\r\n", iter, q);
         endif
-        mi = randsample(M, 1, replacement=true, Mprob)(1);        
+        mi = randsample(M, 1, replacement=true, Mprob)(1); 
         if strcmp(criterion, 'TEGRBCM') && (mi == 1 || mi == 2)
             continue
         endif
-        mn = size(models{mi}.X, 1);
-        b = randi(mn);
-        xt = models{mi}.Xt(b); yt = models{mi}.Yt(b); 
+        if ~strcmp(criterion,'TEGRBCM') 
+            mn = size(models{mi}.X, 1);
+            b = randi(mn);
+            xt = models{mi}.Xt(b); yt = models{mi}.Yt(b); 
+        else
+            mn = size(models_cross{mi}.X, 1);
+            b = randi(mn);
+            xt = models_cross{mi}.Xt(b); yt = models_cross{mi}.Yt(b); 
+        endif
         grad_q_norm = 0.0; grad_q_reg = 0.0; grad_q = 0.0; 
         for k=1:M
             if k==mi
